@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/miekg/dns"
 )
 
 type DNSStatus string
@@ -57,9 +60,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // scanURL performs the actual scanning logic
 func (h *Handler) scanURL(ctx context.Context, url string) (*URLScanResponse, error) {
+	var domain DNSStatus
+	c := new(dns.Client)
+	c.Timeout = 5 * time.Second
+
+	m := new(dns.Msg)
+	m.SetQuestion(dns.Fqdn(url), dns.TypeA)
+
+	r, _, err := c.Exchange(m, "127.0.0.1:53")
+	if err != nil {
+		domain = DNSStatusUnknown
+	}
+
+	switch r.Rcode {
+	case dns.RcodeSuccess:
+		if len(r.Answer) > 0 {
+			domain = DNSStatusUp
+		}
+		domain = DNSStatusDown // No valid answers, consider it down
+	case dns.RcodeNameError: // NXDOMAIN
+	case dns.RcodeServerFailure: // SERVFAIL
+	case dns.RcodeRefused: // REFUSED
+	case dns.RcodeNotAuth: // NOTAUTH
+		domain = DNSStatusDown
+	case dns.RcodeFormatError: // FORMERR
+	case dns.RcodeNotImplemented: // NOTIMP
+	case dns.RcodeNotZone: // NOTZONE
+		domain = DNSStatusDown
+	default:
+		domain = DNSStatusUnknown
+	}
+
 	response := &URLScanResponse{
 		URL:        url,
-		DNSStatus:  DNSStatusUnknown,
+		DNSStatus:  domain,
 		Categories: []string{}, // Empty for now, to be implemented later
 	}
 
