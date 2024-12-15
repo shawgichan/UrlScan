@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,11 +21,11 @@ const (
 	DNSStatusUnknown DNSStatus = "UNKNOWN"
 )
 
-type URLScanRequest struct {
-	URL string `json:"url"`
+type URLScanResponse struct {
+	Results []URLScanResult `json:"results"`
 }
 
-type URLScanResponse struct {
+type URLScanResult struct {
 	URL        string    `json:"url"`
 	DNSStatus  DNSStatus `json:"dns_status"`
 	Categories []string  `json:"categories,omitempty"`
@@ -43,35 +42,56 @@ func NewHandler(logger *zap.Logger) *Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var responseList URLScanResponse
 	// Validation
 	if r.Method != http.MethodGet {
 		h.handleError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
 		return
 	}
 
-	url := r.URL.Query().Get("url")
-	if url == "" {
+	urlParam := r.URL.Query().Get("url")
+	if urlParam == "" {
 		h.handleError(w, fmt.Errorf("URL is required"), http.StatusBadRequest)
 		return
 	}
-
-	// Perform the scan
-	response, err := h.scanURL(r.Context(), url)
-	if err != nil {
-		h.handleError(w, err, http.StatusInternalServerError)
+	dnsStatusFlag := r.URL.Query().Get("dns_status")
+	if dnsStatusFlag != "" && dnsStatusFlag != "1" {
+		h.handleError(w, fmt.Errorf("invalid dns_status flag. Only '1' is accepted"), http.StatusBadRequest)
 		return
 	}
+	categoriesFlag := r.URL.Query().Get("categories")
+	if categoriesFlag != "" && categoriesFlag != "1" {
+		h.handleError(w, fmt.Errorf("invalid categories flag. Only '1' is accepted"), http.StatusBadRequest)
+		return
+	}
+
+	// Split URLs
+	urls := strings.Split(urlParam, ",")
+	for i, u := range urls {
+		urls[i] = strings.TrimSpace(u)
+	}
+
+	// Perform the scan
+	for _, url := range urls {
+		response, err := h.isUP(url)
+		if err != nil {
+			h.handleError(w, err, http.StatusInternalServerError)
+			return
+		}
+		responseList.Results = append(responseList.Results, *response)
+		h.logger.Info("URL scanned",
+			zap.String("url", response.URL),
+			zap.String("status", string(response.DNSStatus)),
+		)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-	h.logger.Info("URL scanned",
-		zap.String("url", response.URL),
-		zap.String("status", string(response.DNSStatus)),
-	)
+	json.NewEncoder(w).Encode(responseList)
 }
 
-// scanURL performs the actual scanning logic
-func (h *Handler) scanURL(ctx context.Context, inputUrl string) (*URLScanResponse, error) {
+// isUP performs the actual scanning logic
+func (h *Handler) isUP(inputUrl string) (*URLScanResult, error) {
 	// Extract the hostname from the input
 	var domain string
 	if parsedURL, err := url.Parse(inputUrl); err == nil && parsedURL.Host != "" {
@@ -94,7 +114,7 @@ func (h *Handler) scanURL(ctx context.Context, inputUrl string) (*URLScanRespons
 	r, _, err := c.Exchange(m, "127.0.0.1:53")
 	if err != nil {
 		h.logger.Error("DNS exchange error", zap.Error(err))
-		return &URLScanResponse{
+		return &URLScanResult{
 			URL:        domain,
 			DNSStatus:  DNSStatusUnknown,
 			Categories: []string{},
@@ -120,7 +140,7 @@ func (h *Handler) scanURL(ctx context.Context, inputUrl string) (*URLScanRespons
 		dnsStatus = DNSStatusUnknown
 	}
 
-	response := &URLScanResponse{
+	response := &URLScanResult{
 		URL:        domain,
 		DNSStatus:  dnsStatus,
 		Categories: []string{}, // Empty for now, to be implemented later
