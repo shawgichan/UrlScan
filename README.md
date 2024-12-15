@@ -112,9 +112,9 @@ UrlScan/
 - Comprehensive documentation
 
 ## 📝 Immediate TODOs
-- [ ] Implement multi-URL scanning
+- [x] Implement multi-URL scanning
 - [ ] Create category mapping system
-- [ ] Set up Zap logger
+- [x] Set up Zap logger
 - [ ] Integrate Prometheus metrics
 - [ ] Develop comprehensive test suite
 - [ ] Create performance benchmarks
