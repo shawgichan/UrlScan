@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
+	"go.uber.org/zap"
 )
 
 type DNSStatus string
@@ -28,14 +32,18 @@ type URLScanResponse struct {
 	Categories []string  `json:"categories,omitempty"`
 }
 
-type Handler struct{}
+type Handler struct {
+	logger *zap.Logger
+}
 
-func NewHandler() *Handler {
-	return &Handler{}
+func NewHandler(logger *zap.Logger) *Handler {
+	return &Handler{
+		logger: logger,
+	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Validattion
+	// Validation
 	if r.Method != http.MethodGet {
 		h.handleError(w, fmt.Errorf("method not allowed"), http.StatusMethodNotAllowed)
 		return
@@ -56,46 +64,71 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+	h.logger.Info("URL scanned",
+		zap.String("url", response.URL),
+		zap.String("status", string(response.DNSStatus)),
+	)
 }
 
 // scanURL performs the actual scanning logic
-func (h *Handler) scanURL(ctx context.Context, url string) (*URLScanResponse, error) {
-	var domain DNSStatus
+func (h *Handler) scanURL(ctx context.Context, inputUrl string) (*URLScanResponse, error) {
+	// Extract the hostname from the input
+	var domain string
+	if parsedURL, err := url.Parse(inputUrl); err == nil && parsedURL.Host != "" {
+		domain = parsedURL.Host
+	} else {
+		domain = inputUrl
+	}
+
+	// Ensure the domain is fully qualified
+	if !strings.HasSuffix(domain, ".") {
+		domain = dns.Fqdn(domain)
+	}
+	var dnsStatus DNSStatus = DNSStatusUnknown
 	c := new(dns.Client)
 	c.Timeout = 5 * time.Second
 
 	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(url), dns.TypeA)
+	m.SetQuestion(dns.Fqdn(domain), dns.TypeA)
 
 	r, _, err := c.Exchange(m, "127.0.0.1:53")
 	if err != nil {
-		domain = DNSStatusUnknown
+		h.logger.Error("DNS exchange error", zap.Error(err))
+		return &URLScanResponse{
+			URL:        domain,
+			DNSStatus:  DNSStatusUnknown,
+			Categories: []string{},
+		}, nil
 	}
 
 	switch r.Rcode {
 	case dns.RcodeSuccess:
 		if len(r.Answer) > 0 {
-			domain = DNSStatusUp
+			dnsStatus = DNSStatusUp
+		} else {
+			h.logger.Info("DNS query successful but no A records found", zap.String("url", domain))
+			dnsStatus = DNSStatusDown
 		}
-		domain = DNSStatusDown // No valid answers, consider it down
-	case dns.RcodeNameError: // NXDOMAIN
-	case dns.RcodeServerFailure: // SERVFAIL
-	case dns.RcodeRefused: // REFUSED
-	case dns.RcodeNotAuth: // NOTAUTH
-		domain = DNSStatusDown
-	case dns.RcodeFormatError: // FORMERR
-	case dns.RcodeNotImplemented: // NOTIMP
-	case dns.RcodeNotZone: // NOTZONE
-		domain = DNSStatusDown
+	case dns.RcodeNameError, // NXDOMAIN
+		dns.RcodeServerFailure, // SERVFAIL
+		dns.RcodeRefused,       // REFUSED
+		dns.RcodeNotAuth,       // NOTAUTH
+		dns.RcodeNotZone:       // NOTZONE
+		h.logger.Info("DNS query failed", zap.String("dns code", strconv.Itoa(r.Rcode)))
+		dnsStatus = DNSStatusDown
 	default:
-		domain = DNSStatusUnknown
+		dnsStatus = DNSStatusUnknown
 	}
 
 	response := &URLScanResponse{
-		URL:        url,
-		DNSStatus:  domain,
+		URL:        domain,
+		DNSStatus:  dnsStatus,
 		Categories: []string{}, // Empty for now, to be implemented later
 	}
+	h.logger.Info("DNS scan result",
+		zap.String("input", inputUrl),
+		zap.String("domain", domain),
+		zap.String("status", string(dnsStatus)))
 
 	return response, nil
 }
