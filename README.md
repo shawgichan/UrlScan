@@ -11,21 +11,6 @@ UrlScan is a web application for scanning multiple URLs, integrating PowerDNS, w
 - Implement comprehensive logging and monitoring
 - Create a flexible URL categorization system
 
-## ✅ Current Features
-- Docker-based development environment
-- PowerDNS integration
-- Basic project structure
-
-## 🚧 Planned Features
-- [ ] Multi-URL scanning endpoint
-- [ ] URL categorization system
-  - Manual category mapping
-  - TLD-based categorization
-- [ ] Advanced logging with Zap
-- [ ] Prometheus metrics integration
-- [ ] Comprehensive test suite
-- [ ] Performance benchmarks
-
 ## 🏗️ Architecture (Draft)
 ```
 UrlScan/
