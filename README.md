@@ -77,9 +77,9 @@ UrlScan/
 ### Phase 1: Core Functionality
 - [x] Initial project setup
 - [x] PowerDNS Docker integration
-- [ ] Multi-URL scanning endpoint
+- [x] Multi-URL scanning endpoint
 - [ ] Basic URL categorization
-- [ ] Zap logger implementation
+- [x] Zap logger implementation
 
 ### Phase 2: Advanced Features
 - [ ] Comprehensive categorization
