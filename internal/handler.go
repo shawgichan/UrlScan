@@ -26,9 +26,10 @@ type URLScanResponse struct {
 }
 
 type URLScanResult struct {
-	URL        string    `json:"url"`
-	DNSStatus  DNSStatus `json:"dns_status"`
-	Categories []string  `json:"categories,omitempty"`
+	URL         string    `json:"url"`
+	DNSStatus   DNSStatus `json:"dns_status"`
+	Categories  []string  `json:"categories,omitempty"`
+	IsMalicious bool      `json:"is_malicious,omitempty"`
 }
 
 type Handler struct {
@@ -39,6 +40,38 @@ func NewHandler(logger *zap.Logger) *Handler {
 	return &Handler{
 		logger: logger,
 	}
+}
+
+// getDomainCategories returns categories and malicious status for a domain
+// will be replaced with proper service call in the future
+func (h *Handler) getDomainCategories(domain string) ([]string, bool) {
+	// Clean up the domain (remove scheme, path, etc.)
+	cleanDomain := domain
+	if strings.Contains(domain, "://") {
+		if parsedURL, err := url.Parse(domain); err == nil {
+			cleanDomain = parsedURL.Host
+		}
+	}
+
+	// Remove www. prefix if present
+	cleanDomain = strings.TrimPrefix(cleanDomain, "www.")
+
+	// First check if domain is malicious
+	isMalicious := MaliciousDomains[cleanDomain]
+
+	// Get categories
+	categories := DomainCategories[cleanDomain]
+
+	// If no direct match, try to match parent domain
+	if len(categories) == 0 {
+		parts := strings.Split(cleanDomain, ".")
+		if len(parts) > 2 {
+			parentDomain := strings.Join(parts[len(parts)-2:], ".")
+			categories = DomainCategories[parentDomain]
+		}
+	}
+
+	return categories, isMalicious
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -78,10 +111,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleError(w, err, http.StatusInternalServerError)
 			return
 		}
+
+		// Add categories and malicious status if categories flag is set
+		if categoriesFlag == "1" {
+			categories, isMalicious := h.getDomainCategories(url)
+			response.Categories = categories
+			response.IsMalicious = isMalicious
+		}
+
 		responseList.Results = append(responseList.Results, *response)
 		h.logger.Info("URL scanned",
 			zap.String("url", response.URL),
 			zap.String("status", string(response.DNSStatus)),
+			zap.String("categories", strings.Join(response.Categories, ",")),
+			zap.Bool("is_malicious", response.IsMalicious),
 		)
 	}
 
@@ -143,7 +186,7 @@ func (h *Handler) isUP(inputUrl string) (*URLScanResult, error) {
 	response := &URLScanResult{
 		URL:        domain,
 		DNSStatus:  dnsStatus,
-		Categories: []string{}, // Empty for now, to be implemented later
+		Categories: []string{}, // Will be populated later if categories flag is set
 	}
 	h.logger.Info("DNS scan result",
 		zap.String("input", inputUrl),
